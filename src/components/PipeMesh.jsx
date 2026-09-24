@@ -1,9 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
-
-// Builds the pipe geometry: foot, mouth (cut-up + flue slit) and resonator body.
-// Metal pipes render as cylinders, wooden pipes as squared boxes.
-// Vertical axis is Y; y = 0 is the top of the languid (mouth bottom), body runs 0..L.
+import { useFrame } from '@react-three/fiber';
 
 const MOUTH_HALF_ANGLE = 0.75;
 
@@ -40,13 +37,12 @@ function useMaterials(material) {
   }, [material]);
 }
 
-function MetalPipe({ L, W, E, cutaway, mats }) {
+function MetalPipe({ L, W, E, cutaway, mats, stopped }) {
   const R = W / 2;
-  const showBackHalf = cutaway;
-  const bodyArgs = showBackHalf
+  const bodyArgs = cutaway
     ? [R, R, L - E, 48, 1, true, Math.PI / 2, Math.PI]
     : [R, R, L - E, 48, 1, true, 0, Math.PI * 2];
-  const mouthArgs = showBackHalf
+  const mouthArgs = cutaway
     ? [R, R, E, 48, 1, true, Math.PI / 2, Math.PI]
     : [R, R, E, 48, 1, true, MOUTH_HALF_ANGLE, Math.PI * 2 - 2 * MOUTH_HALF_ANGLE];
   return (
@@ -59,11 +55,17 @@ function MetalPipe({ L, W, E, cutaway, mats }) {
         <cylinderGeometry args={mouthArgs} />
         <primitive object={mats.shell} attach="material" />
       </mesh>
+      {stopped && (
+        <mesh position={[0, L + 0.006, 0]}>
+          <cylinderGeometry args={[R * 1.08, R * 1.08, 0.012, 32]} />
+          <meshStandardMaterial color="#9c8266" roughness={0.6} metalness={0.1} />
+        </mesh>
+      )}
     </group>
   );
 }
 
-function WoodPipe({ L, W, D, E, wt, cutaway, mats }) {
+function WoodPipe({ L, W, D, E, wt, cutaway, mats, stopped }) {
   const mat = mats.shell;
   return (
     <group>
@@ -86,6 +88,12 @@ function WoodPipe({ L, W, D, E, wt, cutaway, mats }) {
             <primitive object={mat} attach="material" />
           </mesh>
         </>
+      )}
+      {stopped && (
+        <mesh position={[0, L + 0.006, 0]}>
+          <boxGeometry args={[W * 1.08, 0.012, D * 1.08]} />
+          <meshStandardMaterial color="#9c8266" roughness={0.6} metalness={0.1} />
+        </mesh>
       )}
     </group>
   );
@@ -119,20 +127,56 @@ function Languid({ W, D, g }) {
   );
 }
 
-export default function PipeMesh({ params, cutaway }) {
-  const { length: L, width: W, depth: D, cutup: E, flueGap: g, wallThickness: wt, material } = params;
+// Reed (tongwerk) assembly: brass boot over the block, vibrating tongue + shallot.
+function ReedBlock({ W, D, g, playing, rate, fs }) {
+  const tongueRef = useRef();
+  useFrame((state) => {
+    if (tongueRef.current) {
+      const t = state.clock.elapsedTime;
+      const f = Math.min(fs, 90);
+      const amp = playing ? 0.006 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2 * f * 0.11)) : 0;
+      tongueRef.current.rotation.x = playing ? Math.sin(t * Math.PI * 2 * f * 0.11) * 0.06 : 0;
+      tongueRef.current.position.y = 0.004 + amp * 0.5;
+    }
+  });
+  const bootH = Math.max(0.06, D * 1.1);
+  return (
+    <group>
+      <mesh position={[0, -0.03, 0]}>
+        <boxGeometry args={[W * 0.94, 0.02, D * 0.92]} />
+        <meshStandardMaterial color="#b39666" roughness={0.6} metalness={0.2} />
+      </mesh>
+      <mesh position={[0, bootH / 2 - 0.02, 0]}>
+        <cylinderGeometry args={[W * 0.62, W * 0.62, bootH, 24, 1, true]} />
+        <meshStandardMaterial color="#c9a45e" metalness={0.8} roughness={0.35} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh ref={tongueRef} position={[0, 0.004, D * 0.1]} rotation={[0.18, 0, 0]}>
+        <boxGeometry args={[W * 0.5, 0.0015, 0.014]} />
+        <meshStandardMaterial color="#e8c86a" metalness={0.9} roughness={0.25} emissive="#3a2f10" emissiveIntensity={0.3} />
+      </mesh>
+    </group>
+  );
+}
+
+export default function PipeMesh({ params, cutaway, playing }) {
+  const { length: L, width: W, depth: D, cutup: E, flueGap: g, wallThickness: wt, material, type, stopped } = params;
   const mats = useMaterials(material);
-  const isMetal = material === 'metal';
+  const isReed = type === 'reed';
 
   return (
     <group position={[0, -L / 2, 0]}>
       <Foot W={W} mats={mats} />
-      {isMetal ? (
-        <MetalPipe L={L} W={W} E={E} cutaway={cutaway} mats={mats} />
+      {isReed ? (
+        <group>
+          <MetalPipe L={L} W={W} E={0.01} cutaway={cutaway} mats={mats} stopped={stopped} />
+          <ReedBlock W={W} D={D} g={g} playing={playing} rate={params.tremulantRate} fs={params.length * 500} />
+        </group>
+      ) : material === 'metal' ? (
+        <MetalPipe L={L} W={W} E={E} cutaway={cutaway} mats={mats} stopped={stopped} />
       ) : (
-        <WoodPipe L={L} W={W} D={D} E={E} wt={wt} cutaway={cutaway} mats={mats} />
+        <WoodPipe L={L} W={W} D={D} E={E} wt={wt} cutaway={cutaway} mats={mats} stopped={stopped} />
       )}
-      <Languid W={W} D={D} g={g} />
+      {!isReed && <Languid W={W} D={D} g={g} />}
     </group>
   );
 }

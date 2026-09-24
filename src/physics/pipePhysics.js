@@ -1,8 +1,17 @@
-// Pure physics model of a labial (flue) organ pipe. No browser APIs — safe to unit-test in Node.
+// Pure physics model of an organ pipe (flue and reed). No browser APIs — safe to unit-test in Node.
 
 export const PHYS = { c: 343, rho: 1.2 };
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+export const FEET_OPTIONS = [0.5, 1, 2, 3, 4, 6, 8, 12, 16, 32];
+export const FOOT_LABELS = {
+  0.5: '½′', 1: '1′', 2: '2′', 3: '3′', 4: '4′', 6: '6′', 8: '8′', 12: '12′', 16: '16′', 32: '32′',
+};
+
+export function feetToLength(feet, fineMM = 0) {
+  return feet * 0.3048 + fineMM / 1000;
+}
 
 export function freqToNote(f) {
   const midi = 69 + 12 * Math.log2(f / 440);
@@ -12,80 +21,121 @@ export function freqToNote(f) {
   return { name, cents };
 }
 
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
 // Strouhal number at which the jet locks to the fundamental most strongly (empirical optimum).
 const ST_OPT = 0.15;
 // Jet "tongue" width of the speaking window (log-gaussian around the optimum).
 const ST_TONGUE = 0.6;
 export const N_HARMONICS = 14;
 
+// Minimum drive to count as audible speech.
+const DRIVE_MIN = 0.0005;
+
 export function computeResponse(p) {
-  const { length: L, width: W, depth: D, cutup: E, flueGap: g, pressure: P, material } = p;
+  const {
+    width: W, depth: D, cutup: E, flueGap: g,
+    pressure: P, material, type = 'flue', stopped = false,
+    tremulantRate = 0, tremulantDepth = 0,
+  } = p;
+  const L = p.length !== undefined ? p.length : feetToLength(p.feet ?? 8, p.fineMM ?? 0);
 
   const c = PHYS.c;
   const rho = PHYS.rho;
   const v = Math.sqrt((2 * Math.max(P, 0)) / rho); // jet speed at the flue slit
   const area = Math.max(W * D, 1e-6);
-  const rEff = Math.sqrt(area / Math.PI); // radius of the equivalent circular cross-section
+  const rEff = Math.sqrt(area / Math.PI);
   // Effective acoustic length: physical length + open-end correction + mouth correction.
   const Leff = L + 0.61 * rEff + 0.3 * Math.sqrt(area);
-  const f0 = c / (2 * Leff);
+  // Stopped (capped) pipes are quarter-wave resonators, open pipes half-wave.
+  const waveDiv = stopped ? 4 : 2;
+  const f0 = c / (waveDiv * Leff);
 
   const valid = E > 1e-4 && g > 1e-5 && L > 0.02 && W > 0.005 && isFinite(v) && v > 0;
-  const St = valid ? (f0 * E) / v : NaN; // Strouhal number of the jet at the cut-up
-  const mode = valid ? Math.max(1, Math.round(ST_OPT / St)) : 1; // harmonic the jet locks onto
-  const x = valid ? Math.log(St / ST_OPT) : 0;
-  const tongue = valid ? Math.exp(-(x * x) / ST_TONGUE) : 0; // 1.0 = perfect jet/pipe cooperation
-  const speaks = valid && v > 2.5 && tongue > 0.22;
+  const isReed = type === 'reed';
 
-  const drive = speaks
-    ? tongue * (0.35 + 0.65 * Math.min(1, v / 45)) * Math.pow(0.8, mode - 1)
-    : 0;
+  let mode = 1;
+  let tongue = 0;
+  let drive = 0;
+  let speaks = false;
+
+  if (isReed) {
+    // A reed tongue vibrates against the shallot; it does not overblow.
+    speaks = valid && v > 3;
+    tongue = speaks ? 1 : 0;
+    drive = speaks ? Math.min(1, v / 40) * 0.85 : 0;
+  } else {
+    const St = valid ? (f0 * E) / v : NaN; // Strouhal number of the jet at the cut-up
+    let raw = valid ? Math.max(1, Math.round(ST_OPT / St)) : 1;
+    if (stopped && raw === 2) raw = 3; // stopped pipes skip the even mode and jump to the 3rd
+    mode = raw;
+    const x = valid ? Math.log(St / ST_OPT) : 0;
+    tongue = valid ? Math.exp(-(x * x) / ST_TONGUE) : 0;
+    speaks = valid && v > 2.5 && tongue > 0.22;
+    drive = speaks
+      ? tongue * (0.35 + 0.65 * Math.min(1, v / 45)) * Math.pow(0.8, mode - 1)
+      : 0;
+  }
 
   const fs = f0 * mode; // sounding fundamental
 
   // Spectral slope from the pipe scale: wide pipes -> few harmonics, narrow -> rich spectrum.
-  const slope = Math.min(3.2, Math.max(0.9, 0.4 + 10 * (W / L)));
+  const slope = isReed
+    ? clamp(0.25 + 6 * (W / L), 0.6, 2.4)
+    : clamp(0.4 + 10 * (W / L), 0.9, 3.2);
   // Wall damping: wood absorbs high harmonics much more than metal.
-  const beta = material === 'wood' ? 0.16 : 0.06;
+  const beta = isReed
+    ? (material === 'wood' ? 0.09 : 0.035)
+    : (material === 'wood' ? 0.16 : 0.06);
 
   const harmonics = [];
   for (let k = 1; k <= N_HARMONICS; k++) {
     const base = Math.pow(1 / k, slope) * Math.exp(-beta * Math.pow(k - 1, 1.3));
-    harmonics.push({ k, freq: fs * k, amp: speaks ? base * drive : 0 });
+    // A stopped pipe has a displacement node at the cap: even harmonics nearly vanish.
+    const evenFactor = stopped && k % 2 === 0 ? (isReed ? 0.4 : 0.12) : 1;
+    harmonics.push({ k, freq: fs * k, amp: speaks ? base * evenFactor * drive : 0 });
   }
 
   const power = harmonics.reduce((s, h) => s + h.amp * h.amp, 0);
   const levelDb = speaks ? 10 * Math.log10(power + 1e-9) + 96 : -Infinity;
 
-  const attack = speaks
-    ? Math.min(0.45, (0.02 + 0.12 * Math.abs(x)) * (mode > 1 ? 1.6 : 1))
-    : 0.1;
-  const release = (material === 'wood' ? 0.16 : 0.09) + Math.min(0.1, L * 0.03);
+  const attack = isReed
+    ? (speaks ? 0.09 + Math.min(0.25, L * 0.12) : 0.1)
+    : (speaks
+      ? Math.min(0.45, (0.02 + 0.12 * Math.abs(Math.log((f0 * E) / v / ST_OPT))) * (mode > 1 ? 1.6 : 1))
+      : 0.1);
+  const release = isReed
+    ? 1.3 * (0.14 + Math.min(0.1, L * 0.03))
+    : (material === 'wood' ? 0.16 : 0.09) + Math.min(0.1, L * 0.03);
 
-  // Jet noise band (chiff): Strouhal-based estimate around the slit.
-  const noiseCenter = valid ? Math.min(6000, Math.max(900, 0.12 * v / Math.max(g, 2e-4))) : 2000;
-  const chiff = speaks ? 0.55 * Math.min(1, v / 50) * (material === 'metal' ? 1.2 : 0.75) : 0;
+  const noiseCenter = isReed
+    ? Math.min(4000, fs * 3)
+    : Math.min(6000, Math.max(900, 0.12 * v / Math.max(g, 2e-4)));
+  const chiff = isReed
+    ? (speaks ? 0.14 * Math.min(1, v / 50) : 0)
+    : (speaks ? 0.55 * Math.min(1, v / 50) * (material === 'metal' ? 1.2 : 0.75) : 0);
   const breath = speaks ? 0.05 * Math.min(1, v / 50) : 0;
 
   let status;
   if (!valid) status = 'Invalid geometry';
+  else if (isReed) status = v <= 3 ? 'No wind' : 'Speaking (reed)';
   else if (!speaks) {
     status = v <= 2.5
       ? 'No wind'
-      : St > ST_OPT
+      : (f0 * E) / v > ST_OPT
         ? 'Underblown — cut-up too tall for this wind'
         : 'Unstable jet';
   } else if (mode > 1) {
     status = `Overblown — mode ${mode}`;
   } else {
-    status = 'Speaking';
+    status = stopped ? 'Speaking (stopped)' : 'Speaking';
   }
 
   return {
     f0,
     fs,
     mode,
-    St: valid ? St : 0,
+    St: valid ? (f0 * E) / v : 0,
     v,
     drive,
     slope,
@@ -99,47 +149,115 @@ export function computeResponse(p) {
     status,
     note: freqToNote(fs),
     valid,
+    trem: { rate: tremulantRate, depth: tremulantDepth },
   };
+}
+
+function speaksFundamental(p) {
+  const r = computeResponse(p);
+  return r.valid && r.mode === 1 && r.drive > DRIVE_MIN;
+}
+
+// Range of wind pressures (Pa) for which the pipe speaks at its fundamental.
+export function playablePressureRange(p) {
+  let min = null;
+  let max = null;
+  for (let P = 10; P <= 1600; P += 5) {
+    if (speaksFundamental({ ...p, pressure: P })) {
+      if (min === null) min = P;
+      max = P;
+    }
+  }
+  return min === null ? { empty: true, min: 0, max: 0 } : { empty: false, min, max };
+}
+
+// Range of cut-ups (m) for which the pipe speaks at its fundamental with the current wind.
+export function playableCutupRange(p) {
+  let min = null;
+  let max = null;
+  for (let E = 0.003; E <= 0.06; E += 0.0005) {
+    if (speaksFundamental({ ...p, cutup: E })) {
+      if (min === null) min = E;
+      max = E;
+    }
+  }
+  return min === null ? { empty: true, min: 0, max: 0 } : { empty: false, min, max };
+}
+
+// Keeps the pipe inside its playable window: clamps the cut-up to a physically
+// plausible band, then (re)balances the wind pressure so the fundamental speaks.
+export function normalizeParams(p) {
+  const q = { ...p };
+  q.cutup = clamp(q.cutup, Math.max(0.003, q.width * 0.12), q.width * 0.45);
+
+  if (q.type === 'reed') {
+    q.pressure = clamp(q.pressure, 20, 1600);
+    return q;
+  }
+
+  let pr = playablePressureRange(q);
+  if (pr.empty) {
+    const cr = playableCutupRange(q);
+    if (!cr.empty) q.cutup = clamp(q.cutup, cr.min, cr.max);
+    pr = playablePressureRange(q);
+  }
+  if (!pr.empty) q.pressure = clamp(q.pressure, pr.min, pr.max);
+  return q;
 }
 
 export const PRESETS = {
   principal: {
-    label: 'Principal (8′, middle C)',
+    label: 'Principal (2′, middle C)',
     params: {
       material: 'metal',
-      length: 0.62,
+      type: 'flue',
+      stopped: false,
+      feet: 2,
+      fineMM: 0,
       width: 0.077,
       depth: 0.077,
       cutup: 0.014,
       flueGap: 0.001,
       wallThickness: 0.0007,
       pressure: 350,
+      tremulantRate: 0,
+      tremulantDepth: 0,
     },
   },
   flute: {
-    label: 'Wooden flute (8′, middle C)',
+    label: 'Wooden flute (2′)',
     params: {
       material: 'wood',
-      length: 0.62,
+      type: 'flue',
+      stopped: false,
+      feet: 2,
+      fineMM: 0,
       width: 0.13,
       depth: 0.1,
       cutup: 0.028,
       flueGap: 0.0012,
       wallThickness: 0.01,
-      pressure: 550,
+      pressure: 800,
+      tremulantRate: 0,
+      tremulantDepth: 0,
     },
   },
   string: {
-    label: 'String / Viola (8′, middle C)',
+    label: 'String / Viola (2′)',
     params: {
       material: 'metal',
-      length: 0.62,
+      type: 'flue',
+      stopped: false,
+      feet: 2,
+      fineMM: 0,
       width: 0.03,
       depth: 0.03,
       cutup: 0.01,
       flueGap: 0.0008,
       wallThickness: 0.0006,
       pressure: 200,
+      tremulantRate: 0,
+      tremulantDepth: 0,
     },
   },
 };

@@ -22,7 +22,8 @@ function makeSeeds(n) {
 }
 
 export default function AirParticles({ params, response, playing }) {
-  const { width: W, depth: D, cutup: E, length: L, flueGap: g } = params;
+  const { width: W, depth: D, cutup: E, length: L, flueGap: g, type } = params;
+  const isReed = type === 'reed';
 
   const total = N_JET + N_INTERIOR + N_ESCAPE + N_FOOT;
   const seeds = useMemo(
@@ -80,13 +81,16 @@ export default function AirParticles({ params, response, playing }) {
       put(s.lane * r, y, s.seed % 0.004);
     }
 
-    // Flue jet: sheet from the slit up to the cut-up lip, wavering at the acoustic rate.
-    for (const s of seeds.jet) {
-      const p = (s.phase + t * (0.55 * s.speed * (0.5 + response.v / 60))) % 1;
-      const y = 0.004 + p * E;
-      const x = s.lane * W * 0.42;
-      const zOff = Math.sin(p * Math.PI * 2.2 + t * wave * 2 + s.seed) * sway * (0.3 + p);
-      put(x, y, D / 2 - 0.004 + zOff);
+    // Flue jet: sheet from the slit up to the cut-up lip (skipped for reeds,
+    // where the tongue itself vibrates in the boot).
+    if (!isReed) {
+      for (const s of seeds.jet) {
+        const p = (s.phase + t * (0.55 * s.speed * (0.5 + response.v / 60))) % 1;
+        const y = 0.004 + p * E;
+        const x = s.lane * W * 0.42;
+        const zOff = Math.sin(p * Math.PI * 2.2 + t * wave * 2 + s.seed) * sway * (0.3 + p);
+        put(x, y, D / 2 - 0.004 + zOff);
+      }
     }
 
     // Interior: standing-wave shimmer of the resonating air column.

@@ -26,10 +26,31 @@ class SoundEngine {
     this.comp.attack.value = 0.003;
     this.comp.release.value = 0.15;
 
-    this.master.connect(this.comp);
+    this.tremGain = ctx.createGain();
+    this.tremGain.gain.value = 1;
+
+    this.tremLfo = ctx.createOscillator();
+    this.tremLfo.type = 'sine';
+    this.tremLfo.frequency.value = 0;
+    this.tremLfoDepth = ctx.createGain();
+    this.tremLfoDepth.gain.value = 0;
+    this.tremLfo.connect(this.tremLfoDepth);
+    this.tremLfoDepth.connect(this.tremGain.gain);
+    this.tremLfo.start();
+
+    this.tremLfo2 = ctx.createOscillator();
+    this.tremLfo2.type = 'sine';
+    this.tremLfo2.frequency.value = 0;
+    this.tremLfo2Depth = ctx.createGain();
+    this.tremLfo2Depth.gain.value = 0;
+    this.tremLfo2.connect(this.tremLfo2Depth);
+    this.tremLfo2Depth.connect(this.tremGain.gain);
+    this.tremLfo2.start();
+
+    this.master.connect(this.tremGain);
+    this.tremGain.connect(this.comp);
     this.comp.connect(ctx.destination);
 
-    // Persistent oscillator bank (one per harmonic).
     this.oscs = [];
     this.gains = [];
     for (let i = 0; i < N_HARMONICS; i++) {
@@ -45,7 +66,6 @@ class SoundEngine {
       this.gains.push(gain);
     }
 
-    // Looping white-noise buffer for chiff and breath noise.
     const len = 2 * ctx.sampleRate;
     const buf = ctx.createBuffer(1, len, ctx.sampleRate);
     const data = buf.getChannelData(0);
@@ -75,20 +95,31 @@ class SoundEngine {
     }
   }
 
-  _setHarmonicTargets(resp, when, tau) {
+  _setTremulant(resp, tau = 0.12) {
+    const t = this.ctx.currentTime;
+    const { rate, depth } = resp.trem;
+    this.tremLfo.frequency.setTargetAtTime(rate, t, 0.08);
+    this.tremLfo2.frequency.setTargetAtTime(rate * 1.04, t, 0.5);
+    const d = Math.min(0.85, depth);
+    this.tremLfoDepth.gain.setTargetAtTime(d * 0.7, t, tau);
+    this.tremLfo2Depth.gain.setTargetAtTime(d * 0.3, t, tau);
+  }
+
+  _setHarmonicTargets(resp, tau) {
     const t = this.ctx.currentTime;
     resp.harmonics.forEach((h, i) => {
       this.oscs[i].frequency.setTargetAtTime(Math.min(h.freq, FREQ_MAX), t, 0.03);
       const target = h.amp > 0.0005 ? h.amp * HARM_GAIN : 0;
       this.gains[i].gain.setTargetAtTime(target, t, tau);
     });
-    this.noiseFilter.frequency.setTargetAtTime(resp.noiseCenter, t, 0.05);
+    this.noiseFilter.frequency.setTargetAtTime(resp.noiseCenter, t, 0.08);
   }
 
   async play(resp) {
     await this.resume();
     const t = this.ctx.currentTime;
     this.playing = true;
+    this._setTremulant(resp, 0.05);
     const attack = Math.max(0.015, resp.attack);
     resp.harmonics.forEach((h, i) => {
       this.oscs[i].frequency.setTargetAtTime(Math.min(h.freq, FREQ_MAX), t, 0.02);
@@ -98,23 +129,17 @@ class SoundEngine {
       gain.setValueAtTime(gain.value, t);
       gain.linearRampToValueAtTime(target, t + attack);
     });
-    if (resp.chiff > 0.01) {
-      const ng = this.noiseGain.gain;
-      ng.cancelScheduledValues(t);
-      ng.setValueAtTime(ng.value, t);
-      ng.linearRampToValueAtTime(resp.chiff * 0.45, t + 0.015);
-      ng.setTargetAtTime(resp.breath * 0.4, t + 0.06, 0.08);
-    } else {
-      const ng = this.noiseGain.gain;
-      ng.cancelScheduledValues(t);
-      ng.setValueAtTime(ng.value, t);
-      ng.setTargetAtTime(resp.breath * 0.4, t, 0.05);
-    }
+    const ng = this.noiseGain.gain;
+    ng.cancelScheduledValues(t);
+    ng.setValueAtTime(ng.value, t);
+    ng.linearRampToValueAtTime(resp.chiff * 0.45, t + 0.015);
+    ng.setTargetAtTime(resp.breath * 0.4, t + 0.06, 0.08);
   }
 
   update(resp) {
     if (!this.ctx || !this.playing) return;
-    this._setHarmonicTargets(resp, null, 0.05);
+    this._setHarmonicTargets(resp, 0.05);
+    this._setTremulant(resp, 0.15);
     const t = this.ctx.currentTime;
     const ng = this.noiseGain.gain;
     ng.cancelScheduledValues(t);

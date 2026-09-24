@@ -31,9 +31,14 @@ The tone is computed from the pipe's dimensions, not from a fixed sample:
 - **Chiff**: the attack transient and jet noise band are estimated from
   the jet speed and flue gap.
 
-Parameters you can control: length, width, depth (wood), wall thickness,
-cut-up, flue gap, wind pressure, material (metal/wood), plus presets
-(Principal, wooden flute, string).
+Parameters you can control: length in organ feet (½′–32′) with mm fine
+tuning, width, depth (wood), wall thickness, cut-up, flue gap, wind
+pressure, material (metal/wood), pipe type (flue or reed/tongwerk),
+stopped (capped) mode, and an adjustable tremulant on a visible wedge
+bellows. Every option has an (i) info button explaining its effect on the
+tone. Sliders for wind and cut-up grey out the region where the pipe would
+stop speaking or overblow, and settings are normalised so the pipe always
+stays in its playable range.
 
 ## Run
 
@@ -61,3 +66,8 @@ geometry is reported.
 - Keyboard input (virtual manual + computer keys)
 - Registers (stops) with mixtures
 - Recorded/chirped attack transients, more material models
+
+## Deployment
+
+The live demo runs from the `gh-pages` branch (static build of `main`).
+After merging changes, rebuild and republish that branch.
