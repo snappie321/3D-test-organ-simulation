@@ -47,8 +47,8 @@ function Info({ text }) {
   );
 }
 
-function Slider({ id, label, unit, min, max, step, value, onChange, format, disabledZone }) {
-  const zone = disabledZone || null;
+function Slider({ id, label, unit, min, max, step, value, onChange, format, disabledZones }) {
+  const zones = disabledZones || [];
   return (
     <label className="ctl">
       <span className="ctl-label">
@@ -59,15 +59,16 @@ function Slider({ id, label, unit, min, max, step, value, onChange, format, disa
         </em>
       </span>
       <div className="range-wrap">
-        {zone && (
+        {zones.map((z, i) => (
           <div
+            key={i}
             className="range-shade"
             style={{
-              left: ((zone.min - min) / (max - min)) * 100 + '%',
-              width: ((zone.max - zone.min) / (max - min)) * 100 + '%',
+              left: ((z.min - min) / (max - min)) * 100 + '%',
+              width: ((z.max - z.min) / (max - min)) * 100 + '%',
             }}
           />
-        )}
+        ))}
         <input
           type="range"
           min={min}
@@ -77,7 +78,7 @@ function Slider({ id, label, unit, min, max, step, value, onChange, format, disa
           onChange={(e) => onChange(parseFloat(e.target.value))}
         />
       </div>
-      {zone && <span className="range-note">Grey = would not speak</span>}
+      {zones.length > 0 && <span className="range-note">Grey = would not speak</span>}
     </label>
   );
 }
@@ -192,7 +193,10 @@ export default function ControlPanel() {
             value={params.cutup}
             onChange={(v) => setParam('cutup', v)}
             format={fmtMM}
-            disabledZone={cRange && !cRange.empty ? { min: 0.003, max: cRange.min } : null}
+            disabledZones={[
+              ...(cRange && !cRange.empty ? [{ min: 0.003, max: Math.min(cRange.min, 0.06) }] : []),
+              ...(cRange && !cRange.empty && cRange.max < 0.06 ? [{ min: cRange.max, max: 0.06 }] : []),
+            ]}
           />
           <Slider id="flue" label="Flue gap" unit="" min={0.0003} max={0.004} step={0.00005} value={params.flueGap} onChange={(v) => setParam('flueGap', v)} format={fmtMM} />
         </>
@@ -209,7 +213,10 @@ export default function ControlPanel() {
         value={params.pressure}
         onChange={(v) => setParam('pressure', v)}
         format={fmtPa}
-        disabledZone={pRange && !pRange.empty ? { min: pRange.max, max: 1200 } : null}
+        disabledZones={[
+          ...(pRange && !pRange.empty && pRange.min > 50 ? [{ min: 50, max: Math.min(pRange.min, 1200) }] : []),
+          ...(pRange && !pRange.empty && pRange.max < 1200 ? [{ min: pRange.max, max: 1200 }] : []),
+        ]}
       />
 
       <h3>Tremulant</h3>

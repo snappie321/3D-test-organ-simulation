@@ -162,7 +162,7 @@ function speaksFundamental(p) {
 export function playablePressureRange(p) {
   let min = null;
   let max = null;
-  for (let P = 10; P <= 1600; P += 5) {
+  for (let P = 5; P <= 1600; P += 5) {
     if (speaksFundamental({ ...p, pressure: P })) {
       if (min === null) min = P;
       max = P;
@@ -188,7 +188,9 @@ export function playableCutupRange(p) {
 // plausible band, then (re)balances the wind pressure so the fundamental speaks.
 export function normalizeParams(p) {
   const q = { ...p };
-  q.cutup = clamp(q.cutup, Math.max(0.003, q.width * 0.12), q.width * 0.45);
+  const mouthMin = Math.max(0.003, q.width * 0.12);
+  const mouthMax = q.width * 0.45;
+  q.cutup = clamp(q.cutup, mouthMin, mouthMax);
 
   if (q.type === 'reed') {
     q.pressure = clamp(q.pressure, 20, 1600);
@@ -197,8 +199,22 @@ export function normalizeParams(p) {
 
   let pr = playablePressureRange(q);
   if (pr.empty) {
-    const cr = playableCutupRange(q);
-    if (!cr.empty) q.cutup = clamp(q.cutup, cr.min, cr.max);
+    // No wind setting works with this mouth: retune jet cooperation to the
+    // Strouhal optimum (v = f0·E / St_opt). If the jet would be too slow, raise
+    // the cut-up as far as the mouth allows.
+    const area = Math.max(q.width * q.depth, 1e-6);
+    const rEff = Math.sqrt(area / Math.PI);
+    const L = q.length !== undefined ? q.length : feetToLength(q.feet ?? 8, q.fineMM ?? 0);
+    const Leff = L + 0.61 * rEff + 0.3 * Math.sqrt(area);
+    const f0 = PHYS.c / ((q.stopped ? 4 : 2) * Leff);
+    let E = q.cutup;
+    let v = (f0 * E) / ST_OPT;
+    if (v < 3) {
+      E = clamp((3 * ST_OPT) / f0, mouthMin, mouthMax);
+      v = Math.max((f0 * E) / ST_OPT, 3);
+    }
+    q.cutup = E;
+    q.pressure = clamp((PHYS.rho * v * v) / 2, 5, 1600);
     pr = playablePressureRange(q);
   }
   if (!pr.empty) q.pressure = clamp(q.pressure, pr.min, pr.max);

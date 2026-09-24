@@ -9,8 +9,12 @@ import {
 } from './physics/pipePhysics.js';
 import { getEngine } from './physics/soundEngine.js';
 
+function withLength(params) {
+  return { ...params, length: feetToLength(params.feet, params.fineMM) };
+}
+
 export const useStore = create((set, get) => ({
-  params: { ...PRESETS.principal.params },
+  params: withLength({ ...PRESETS.principal.params }),
   playing: false,
   cutaway: true,
   bellowsExpanded: false,
@@ -18,14 +22,10 @@ export const useStore = create((set, get) => ({
   setParam: (key, value) => {
     set((s) => {
       let params = { ...s.params, [key]: value };
-      if (key === 'feet') {
-        params.length = feetToLength(value, params.fineMM);
-      } else if (key === 'fineMM') {
-        params.length = feetToLength(params.feet, value);
-      } else if (s.params.material === 'metal' && key === 'width' && params.type !== 'reed') {
+      if (s.params.material === 'metal' && key === 'width' && params.type !== 'reed') {
         params.depth = value;
       }
-      params = normalizeParams(params);
+      params = normalizeParams(withLength(params));
       return { params };
     });
     get().refreshAudio();
@@ -35,7 +35,7 @@ export const useStore = create((set, get) => ({
     set((s) => {
       let params = { ...s.params, material };
       if (material === 'metal' && params.type !== 'reed') params.depth = params.width;
-      params = normalizeParams(params);
+      params = normalizeParams(withLength(params));
       return { params };
     });
     get().refreshAudio();
@@ -44,13 +44,13 @@ export const useStore = create((set, get) => ({
   setType: (type) => {
     set((s) => {
       const params = { ...s.params, type };
-      return { params: normalizeParams(params) };
+      return { params: normalizeParams(withLength(params)) };
     });
     get().refreshAudio();
   },
 
   applyPreset: (name) => {
-    set((s) => ({ params: normalizeParams({ ...PRESETS[name].params }) }));
+    set({ params: normalizeParams(withLength({ ...PRESETS[name].params })) });
     get().refreshAudio();
   },
 

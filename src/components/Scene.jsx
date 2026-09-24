@@ -25,7 +25,7 @@ export default function Scene() {
         <ambientLight intensity={0.75} />
         <directionalLight position={[2, 5, 3]} intensity={1.0} castShadow />
         <directionalLight position={[-3, 2, -2]} intensity={0.3} color="#b8cfff" />
-        <PipeMesh params={params} cutaway={cutaway} playing={playing} />
+        <PipeMesh params={params} cutaway={cutaway} playing={playing} response={response} />
         {playing && <AirParticles params={params} response={response} playing={playing} />}
         <Bellows footY={-params.length / 2 - 0.13} />
         <Grid

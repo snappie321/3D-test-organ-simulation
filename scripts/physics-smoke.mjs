@@ -76,4 +76,26 @@ assert.ok(!silent.status.startsWith('Speaking'), 'almost no wind should not spea
 const invalid = computeResponse({ ...PRESETS.principal.params, cutup: 0 });
 assert.strictEqual(invalid.status, 'Invalid geometry');
 
+// Regression: presets carry feet/fineMM, and withLength-style state must always
+// produce a finite positive length and a valid, speaking response.
+for (const [name, preset] of Object.entries(PRESETS)) {
+  const state = { ...preset.params, length: feetToLength(preset.params.feet, preset.params.fineMM) };
+  assert.ok(isFinite(state.length) && state.length > 0, `${name}: length must be finite and positive`);
+  const resp = computeResponse(normalizeParams(state));
+  assert.ok(resp.valid, `${name}: response must be valid`);
+  assert.ok(resp.status.startsWith('Speaking'), `${name}: should speak, got "${resp.status}"`);
+  for (const [k, v] of Object.entries(state)) {
+    if (typeof v === 'number') assert.ok(isFinite(v), `${name}: ${k} must be finite`);
+  }
+}
+
+// Regression: every feet option must normalise to a speaking pipe when starting
+// from the principal preset's mouth and wind.
+for (const feet of [0.5, 1, 2, 4, 8, 16, 32]) {
+  const state = { ...PRESETS.principal.params, feet, fineMM: 0 };
+  state.length = feetToLength(feet);
+  const resp = computeResponse(normalizeParams(state));
+  assert.ok(resp.status.startsWith('Speaking'), `${feet}' must speak after normalisation, got "${resp.status}"`);
+}
+
 console.log('physics smoke test: all assertions passed');

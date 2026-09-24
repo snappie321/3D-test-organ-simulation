@@ -158,7 +158,7 @@ function ReedBlock({ W, D, g, playing, rate, fs }) {
   );
 }
 
-export default function PipeMesh({ params, cutaway, playing }) {
+export default function PipeMesh({ params, cutaway, playing, response }) {
   const { length: L, width: W, depth: D, cutup: E, flueGap: g, wallThickness: wt, material, type, stopped } = params;
   const mats = useMaterials(material);
   const isReed = type === 'reed';
@@ -169,7 +169,7 @@ export default function PipeMesh({ params, cutaway, playing }) {
       {isReed ? (
         <group>
           <MetalPipe L={L} W={W} E={0.01} cutaway={cutaway} mats={mats} stopped={stopped} />
-          <ReedBlock W={W} D={D} g={g} playing={playing} rate={params.tremulantRate} fs={params.length * 500} />
+          <ReedBlock W={W} D={D} g={g} playing={playing} rate={params.tremulantRate} fs={response ? response.fs : 260} />
         </group>
       ) : material === 'metal' ? (
         <MetalPipe L={L} W={W} E={E} cutaway={cutaway} mats={mats} stopped={stopped} />
