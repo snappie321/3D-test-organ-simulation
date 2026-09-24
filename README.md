@@ -4,6 +4,10 @@ A 3D web simulation of a single labial (flue) organ pipe. Adjust the pipe's
 geometry and wind, watch the air move, and hear the resulting tone in real
 time. Built as the first step toward a multi-pipe / multi-register organ.
 
+**Live demo:** once GitHub Pages is enabled for this repository (Settings →
+Pages → Source: `gh-pages` branch, `/` root), the app is available at
+<https://snappie321.github.io/3D-test-organ-simulation/>.
+
 ## Stack
 
 - React + React Three Fiber (3D scene, cutaway pipe view, air particles)
