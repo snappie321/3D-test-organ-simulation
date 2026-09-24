@@ -4,29 +4,39 @@ import { useMemo } from 'react';
 import PipeMesh from './PipeMesh.jsx';
 import AirParticles from './AirParticles.jsx';
 import Bellows from './Bellows.jsx';
-import { computeResponse } from '../physics/pipePhysics.js';
+import { computeResponse, rankResponses, RANK_OFFSETS } from '../physics/pipePhysics.js';
 import { useStore } from '../store.js';
+
+const RANK_X = (i) => (i === 0 ? 0 : (i % 2 === 1 ? 1 : -1) * (0.14 + 0.06 * Math.floor(i / 2)));
 
 export default function Scene() {
   const params = useStore((s) => s.params);
   const cutaway = useStore((s) => s.cutaway);
   const playing = useStore((s) => s.playing);
-  const response = useMemo(() => computeResponse(params), [params]);
-  const camDist = Math.max(0.9, params.length * 1.4);
+  const responses = useMemo(() => rankResponses(params), [params]);
+  const response = responses[0];
+  const nRanks = responses.length;
+  const camDist = Math.max(1.1, params.length * 1.5);
 
   return (
     <div className="scene-host">
       <Canvas
         shadows
-        camera={{ position: [camDist * 0.8, camDist * 0.4, camDist * 0.9], fov: 42 }}
+        camera={{ position: [camDist * 0.8, camDist * 0.45, camDist * 1.0], fov: 42 }}
       >
         <color attach="background" args={['#dfe7f3']} />
         <fog attach="fog" args={['#dfe7f3', 6, 14]} />
         <ambientLight intensity={0.75} />
         <directionalLight position={[2, 5, 3]} intensity={1.0} castShadow />
         <directionalLight position={[-3, 2, -2]} intensity={0.3} color="#b8cfff" />
-        <PipeMesh params={params} cutaway={cutaway} playing={playing} response={response} />
-        {playing && <AirParticles params={params} response={response} playing={playing} />}
+        {responses.map((resp, i) => (
+          <group key={i} position={[RANK_X(i), 0, 0]}>
+            <PipeMesh params={params} cutaway={cutaway} playing={playing} response={resp} />
+            {playing && (
+              <AirParticles params={params} response={resp} playing={playing} />
+            )}
+          </group>
+        ))}
         <Bellows footY={-params.length / 2 - 0.13} />
         <Grid
           args={[10, 10]}
@@ -40,7 +50,12 @@ export default function Scene() {
           fadeDistance={12}
           infiniteGrid
         />
-        <OrbitControls target={[0, 0, 0]} minDistance={0.25} maxDistance={6} enableDamping />
+        <OrbitControls
+          target={[0, 0, 0]}
+          minDistance={0.25}
+          maxDistance={8 + nRanks}
+          enableDamping
+        />
       </Canvas>
     </div>
   );

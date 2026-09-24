@@ -2,9 +2,9 @@ import { useMemo, useState } from 'react';
 import { useStore } from '../store.js';
 import {
   computeResponse,
+  rankResponses,
   playablePressureRange,
   playableCutupRange,
-  feetToLength,
   PRESETS,
   FEET_OPTIONS,
   FOOT_LABELS,
@@ -12,19 +12,24 @@ import {
 } from '../physics/pipePhysics.js';
 
 const INFOS = {
-  feet: 'Organ pipe lengths are named in feet (′), like organ stops: 8′ = a pipe speaking at unison pitch (like a piano), 4′ one octave higher, 2′ two octaves higher. A 2′ pipe is about 61 cm long. Halving the length doubles the pitch.',
+  feet: 'Organ pipe lengths are named in feet (′), like organ stops: 8′ = unison pitch, 4′ one octave higher, 2′ two octaves higher. Halving the length doubles the pitch.',
   fine: 'Fine adjustment in millimetres on top of the chosen foot measure, to tune the pipe precisely.',
   width: 'The pipe scale: internal width. Wide pipes (flutes) produce round, harmonic-poor tones; narrow pipes (strings) produce bright, harmonic-rich tones.',
-  depth: 'Internal depth of a wooden pipe. Wooden pipes are rectangular; a deeper pipe has a larger acoustic cross-section and sounds slightly lower.',
+  depth: 'Internal depth of a wooden pipe. A deeper pipe has a larger acoustic cross-section and sounds slightly lower.',
   wall: 'Wall thickness. Thicker wooden walls absorb more sound energy, making the tone softer and duller. In metal pipes this mainly affects stability.',
-  cutup: 'The cut-up is the height of the mouth opening (from the flue slit to the upper lip). A higher cut-up needs more wind and gives a slower, rounder speech; a lower cut-up speaks quickly but overblows sooner.',
+  cutup: 'The cut-up is the height of the mouth opening. A higher cut-up needs more wind and gives a slower, rounder speech; a lower cut-up speaks quickly but overblows sooner.',
   flue: 'The flue gap is the narrow slit the wind passes through. A wider slit gives a strong, loud jet (more chiff); a narrower slit gives a gentle, quiet jet.',
   pressure: 'Wind pressure from the bellows in pascal. The jet speed follows √(2P/ρ). Too little wind: no speech. Too much: the pipe overblows (jumps an octave).',
   tremRate: 'Tremulant speed in Hz (beats per second). A slow tremulant (~4–5 Hz) is romantic and wavy; a fast one (~6–8 Hz) is more like a vibrato.',
-  tremDepth: 'Tremulant depth: how strongly the wind (and thus the volume and pitch) sways. A depth of 0 disables the tremulant.',
-  material: 'Metal pipes (usually a tin/lead alloy) reflect high frequencies well: a clear, bright tone. Wooden pipes absorb highs: a warm, fluty tone.',
-  type: 'Flue pipes (labial): a jet of air strikes the upper lip and makes the air column vibrate. Reed pipes (tongwerk): a brass tongue vibrates against a shallot — a piercing, trumpet-like tone that cannot overblow.',
-  stopped: 'A stopped (capped) pipe is closed at the top. The air column vibrates a quarter-wave instead of a half-wave: the same length sounds one octave lower, and even harmonics nearly disappear — a typically hollow, flute-like tone.',
+  tremDepth: 'Tremulant depth: how strongly the wind (and thus volume and pitch) sways. A depth of 0 disables the tremulant.',
+  material: 'Metal pipes (tin/lead alloy) reflect high frequencies well: a clear, bright tone. Wooden pipes absorb highs: a warm, fluty tone.',
+  type: 'Flue pipes: a jet of air strikes the upper lip and makes the air column vibrate. Reed pipes: a brass tongue vibrates against a shallot — a piercing, trumpet-like tone that cannot overblow.',
+  stopped: 'A stopped (capped) pipe is closed at the top: the same length sounds one octave lower and even harmonics nearly disappear — a hollow, flute-like tone.',
+  chimney: 'The chimney (Rohrflöte): a small open tube through the cap of a stopped pipe. It adds its own resonance, partially restores even harmonics and gives the typical hollow, slightly reedy flute timbre.',
+  ranks: 'Number of pipes speaking together (like a céleste rank). Two ranks with a detune offset produce slow, rolling beats — the "floating" voix céleste sound.',
+  detune: 'Detune in cents between the ranks. 1–3 cents gives a gentle waver (undamus), 4–8 cents a pronounced céleste beat, more than 10 cents sounds out of tune.',
+  shallot: 'The shallot is the brass tube against which the reed tongue vibrates. An open (expressive) shallot gives a bright trumpet tone; a closed (capped) shallot gives the narrow, vocal vox humana character.',
+  tongue: 'Length of the brass reed tongue. A shorter tongue vibrates faster and brighter (vox humana); a longer tongue gives a fuller, heavier trumpet tone.',
 };
 
 function Info({ text }) {
@@ -93,13 +98,15 @@ export default function ControlPanel() {
   const toggleWind = useStore((s) => s.toggleWind);
   const cutaway = useStore((s) => s.cutaway);
   const toggleCutaway = useStore((s) => s.toggleCutaway);
-  const response = useMemo(() => computeResponse(params), [params]);
+  const responses = useMemo(() => rankResponses(params), [params]);
+  const response = responses[0];
   const pRange = useMemo(() => (params.type === 'reed' ? null : playablePressureRange(params)), [params]);
   const cRange = useMemo(() => (params.type === 'reed' ? null : playableCutupRange(params)), [params]);
 
   const fmtM = (v) => (v * 100).toFixed(1) + ' cm';
   const fmtMM = (v) => (v * 1000).toFixed(1) + ' mm';
   const fmtPa = (v) => Math.round(v) + ' Pa';
+  const isReed = params.type === 'reed';
 
   return (
     <aside className="panel">
@@ -121,14 +128,24 @@ export default function ControlPanel() {
             {response.note.name}
             {response.note.cents >= 0 ? '+' : ''}
             {response.note.cents} cent · {response.fs.toFixed(1)} Hz
+            {responses.length > 1 && ` · ${responses.length} ranks`}
           </span>
         )}
       </div>
 
+      <h3>Presets</h3>
+      <div className="btn-row wrap">
+        {Object.entries(PRESETS).map(([name, p]) => (
+          <button key={name} className="seg" onClick={() => applyPreset(name)}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
       <h3>Type <Info text={INFOS.type} /></h3>
       <div className="btn-row">
-        <button className={params.type !== 'reed' ? 'seg on' : 'seg'} onClick={() => setType('flue')}>Flue</button>
-        <button className={params.type === 'reed' ? 'seg on' : 'seg'} onClick={() => setType('reed')}>Reed</button>
+        <button className={!isReed ? 'seg on' : 'seg'} onClick={() => setType('flue')}>Flue</button>
+        <button className={isReed ? 'seg on' : 'seg'} onClick={() => setType('reed')}>Reed</button>
         <button
           className={params.stopped ? 'seg on' : 'seg'}
           onClick={() => setParam('stopped', !params.stopped)}
@@ -150,22 +167,13 @@ export default function ControlPanel() {
         ))}
       </div>
 
-      <h3>Presets</h3>
-      <div className="btn-row wrap">
-        {Object.entries(PRESETS).map(([name, p]) => (
-          <button key={name} className="seg" onClick={() => applyPreset(name)}>
-            {p.label}
-          </button>
-        ))}
-      </div>
-
       <h3>Pipe length</h3>
       <div className="btn-row wrap feet">
         {FEET_OPTIONS.map((f) => (
           <button
             key={f}
-            className={params.feet === f && params.fineMM === 0 ? 'seg on' : 'seg'}
-            onClick={() => { setParam('feet', f); setParam('fineMM', 0); }}
+            className={params.feet === f ? 'seg on' : 'seg'}
+            onClick={() => setParam('feet', f)}
           >
             {FOOT_LABELS[f]}
           </button>
@@ -173,14 +181,81 @@ export default function ControlPanel() {
       </div>
       <Slider id="fine" label="Fine tuning" unit=" mm" min={-50} max={50} step={1} value={params.fineMM} onChange={(v) => setParam('fineMM', v)} />
 
+      {params.stopped && !isReed && (
+        <Slider
+          id="chimney"
+          label="Chimney (Rohrflöte)"
+          unit=""
+          min={0}
+          max={0.3}
+          step={0.005}
+          value={params.chimney}
+          onChange={(v) => setParam('chimney', v)}
+          format={fmtM}
+        />
+      )}
+
+      {isReed && (
+        <>
+          <h3>Reed (tongwerk)</h3>
+          <div className="btn-row">
+            {['open', 'closed'].map((s) => (
+              <button
+                key={s}
+                className={params.shallot === s ? 'seg on' : 'seg'}
+                onClick={() => setParam('shallot', s)}
+              >
+                {s === 'open' ? 'Open shallot' : 'Closed shallot'}
+              </button>
+            ))}
+          </div>
+          <Slider
+            id="tongue"
+            label="Tongue length"
+            unit=""
+            min={0.02}
+            max={0.12}
+            step={0.001}
+            value={params.tongueLength}
+            onChange={(v) => setParam('tongueLength', v)}
+            format={fmtMM}
+          />
+        </>
+      )}
+
+      <h3>Ranks (céleste)</h3>
+      <div className="btn-row">
+        {[1, 2, 3].map((r) => (
+          <button
+            key={r}
+            className={params.ranks === r ? 'seg on' : 'seg'}
+            onClick={() => setParam('ranks', r)}
+          >
+            {r} {r === 1 ? 'pipe' : 'ranks'}
+          </button>
+        ))}
+      </div>
+      {params.ranks > 1 && (
+        <Slider
+          id="detune"
+          label="Detune"
+          unit=" cents"
+          min={0}
+          max={12}
+          step={0.5}
+          value={params.detuneCents}
+          onChange={(v) => setParam('detuneCents', v)}
+        />
+      )}
+
       <h3>Dimensions</h3>
       <Slider id="width" label="Width" unit="" min={0.02} max={0.3} step={0.002} value={params.width} onChange={(v) => setParam('width', v)} format={fmtM} />
-      {params.material === 'wood' && params.type !== 'reed' && (
+      {params.material === 'wood' && !isReed && (
         <Slider id="depth" label="Depth" unit="" min={0.02} max={0.3} step={0.002} value={params.depth} onChange={(v) => setParam('depth', v)} format={fmtM} />
       )}
       <Slider id="wall" label="Wall thickness" unit="" min={0.0004} max={0.02} step={0.0002} value={params.wallThickness} onChange={(v) => setParam('wallThickness', v)} format={fmtMM} />
 
-      {params.type !== 'reed' && (
+      {!isReed && (
         <>
           <h3>Mouth</h3>
           <Slider
@@ -224,8 +299,9 @@ export default function ControlPanel() {
       <Slider id="tremDepth" label="Depth" unit="" min={0} max={1} step={0.01} value={params.tremulantDepth} onChange={(v) => setParam('tremulantDepth', v)} />
 
       <div className="hint">
-        Jet speed ≈ {response.v.toFixed(1)} m/s · Strouhal ≈{' '}
-        {response.St > 0 ? response.St.toFixed(3) : '—'}
+        Jet speed ≈ {response.v.toFixed(1)} m/s
+        {!isReed && <> · Strouhal ≈ {response.St > 0 ? response.St.toFixed(3) : '—'}</>}
+        {response.formants.length > 0 && <> · formant ≈ {Math.round(response.formants[0].freq)} Hz</>}
       </div>
 
       <h3>Spectrum</h3>

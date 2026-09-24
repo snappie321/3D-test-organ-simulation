@@ -4,6 +4,7 @@ import {
   normalizeParams,
   playablePressureRange,
   playableCutupRange,
+  rankResponses,
   feetToLength,
   PRESETS,
 } from './physics/pipePhysics.js';
@@ -17,11 +18,11 @@ export const useStore = create((set, get) => ({
   params: withLength({ ...PRESETS.principal.params }),
   playing: false,
   cutaway: true,
-  bellowsExpanded: false,
 
   setParam: (key, value) => {
     set((s) => {
       let params = { ...s.params, [key]: value };
+      if (key === 'feet') params.fineMM = 0;
       if (s.params.material === 'metal' && key === 'width' && params.type !== 'reed') {
         params.depth = value;
       }
@@ -59,26 +60,27 @@ export const useStore = create((set, get) => ({
   toggleWind: async () => {
     const { playing, params } = get();
     const engine = getEngine();
-    const resp = computeResponse(params);
+    const responses = rankResponses(params);
     if (!playing) {
-      await engine.play(resp);
-      set({ playing: true, bellowsExpanded: false });
+      await engine.play(responses);
+      set({ playing: true });
     } else {
-      engine.stop(resp);
+      engine.stop(responses);
       set({ playing: false });
     }
   },
 
   refreshAudio: () => {
     const { playing, params } = get();
-    if (playing) getEngine().update(computeResponse(params));
-  },
-
-  ranges: () => {
-    const { params } = get();
-    return {
-      pressure: playablePressureRange(params),
-      cutup: playableCutupRange(params),
-    };
+    if (playing) getEngine().update(rankResponses(params));
   },
 }));
+
+export function useRanges() {
+  const params = useStore((s) => s.params);
+  const isReed = params.type === 'reed';
+  return {
+    pressure: isReed ? null : playablePressureRange(params),
+    cutup: isReed ? null : playableCutupRange(params),
+  };
+}

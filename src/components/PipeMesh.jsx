@@ -37,7 +37,43 @@ function useMaterials(material) {
   }, [material]);
 }
 
-function MetalPipe({ L, W, E, cutaway, mats, stopped }) {
+function Cap({ L, W, D, isMetal, chimney }) {
+  // Stopped cap; a Rohrflöte adds a small open tube (chimney) through the cap.
+  const capMat = { color: '#9c8266', roughness: 0.6, metalness: 0.1 };
+  if (isMetal) {
+    const R = W / 2;
+    return (
+      <group>
+        <mesh position={[0, L + 0.006, 0]}>
+          <cylinderGeometry args={[R * 1.08, R * 1.08, 0.012, 32]} />
+          <meshStandardMaterial {...capMat} />
+        </mesh>
+        {chimney > 0.002 && (
+          <mesh position={[0, L + 0.006 + chimney / 2, 0]}>
+            <cylinderGeometry args={[R * 0.3, R * 0.3, chimney, 24, 1, true]} />
+            <meshStandardMaterial color="#b39666" roughness={0.5} metalness={0.3} side={THREE.DoubleSide} />
+          </mesh>
+        )}
+      </group>
+    );
+  }
+  return (
+    <group>
+      <mesh position={[0, L + 0.006, 0]}>
+        <boxGeometry args={[W * 1.08, 0.012, D * 1.08]} />
+        <meshStandardMaterial {...capMat} />
+      </mesh>
+      {chimney > 0.002 && (
+        <mesh position={[0, L + 0.006 + chimney / 2, 0]}>
+          <cylinderGeometry args={[Math.min(W, D) * 0.22, Math.min(W, D) * 0.22, chimney, 20, 1, true]} />
+          <meshStandardMaterial color="#b39666" roughness={0.5} metalness={0.3} side={THREE.DoubleSide} />
+        </mesh>
+      )}
+    </group>
+  );
+}
+
+function MetalPipe({ L, W, E, cutaway, mats, stopped, chimney }) {
   const R = W / 2;
   const bodyArgs = cutaway
     ? [R, R, L - E, 48, 1, true, Math.PI / 2, Math.PI]
@@ -55,17 +91,12 @@ function MetalPipe({ L, W, E, cutaway, mats, stopped }) {
         <cylinderGeometry args={mouthArgs} />
         <primitive object={mats.shell} attach="material" />
       </mesh>
-      {stopped && (
-        <mesh position={[0, L + 0.006, 0]}>
-          <cylinderGeometry args={[R * 1.08, R * 1.08, 0.012, 32]} />
-          <meshStandardMaterial color="#9c8266" roughness={0.6} metalness={0.1} />
-        </mesh>
-      )}
+      {stopped && <Cap L={L} W={W} D={W} isMetal chimney={chimney} />}
     </group>
   );
 }
 
-function WoodPipe({ L, W, D, E, wt, cutaway, mats, stopped }) {
+function WoodPipe({ L, W, D, E, wt, cutaway, mats, stopped, chimney }) {
   const mat = mats.shell;
   return (
     <group>
@@ -89,12 +120,7 @@ function WoodPipe({ L, W, D, E, wt, cutaway, mats, stopped }) {
           </mesh>
         </>
       )}
-      {stopped && (
-        <mesh position={[0, L + 0.006, 0]}>
-          <boxGeometry args={[W * 1.08, 0.012, D * 1.08]} />
-          <meshStandardMaterial color="#9c8266" roughness={0.6} metalness={0.1} />
-        </mesh>
-      )}
+      {stopped && <Cap L={L} W={W} D={D} isMetal={false} chimney={chimney} />}
     </group>
   );
 }
@@ -127,19 +153,19 @@ function Languid({ W, D, g }) {
   );
 }
 
-// Reed (tongwerk) assembly: brass boot over the block, vibrating tongue + shallot.
-function ReedBlock({ W, D, g, playing, rate, fs }) {
+function ReedBlock({ W, D, playing, fs, shallot }) {
   const tongueRef = useRef();
   useFrame((state) => {
-    if (tongueRef.current) {
-      const t = state.clock.elapsedTime;
-      const f = Math.min(fs, 90);
-      const amp = playing ? 0.006 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2 * f * 0.11)) : 0;
-      tongueRef.current.rotation.x = playing ? Math.sin(t * Math.PI * 2 * f * 0.11) * 0.06 : 0;
-      tongueRef.current.position.y = 0.004 + amp * 0.5;
+    if (!tongueRef.current) return;
+    const t = state.clock.elapsedTime;
+    if (playing) {
+      tongueRef.current.rotation.x = 0.18 + Math.sin(t * Math.PI * 2 * Math.min(fs, 90) * 0.11) * 0.06;
+    } else {
+      tongueRef.current.rotation.x = 0.18;
     }
   });
   const bootH = Math.max(0.06, D * 1.1);
+  const shallotColor = shallot === 'closed' ? '#c9a45e' : '#e0b96a';
   return (
     <group>
       <mesh position={[0, -0.03, 0]}>
@@ -148,7 +174,7 @@ function ReedBlock({ W, D, g, playing, rate, fs }) {
       </mesh>
       <mesh position={[0, bootH / 2 - 0.02, 0]}>
         <cylinderGeometry args={[W * 0.62, W * 0.62, bootH, 24, 1, true]} />
-        <meshStandardMaterial color="#c9a45e" metalness={0.8} roughness={0.35} side={THREE.DoubleSide} />
+        <meshStandardMaterial color={shallotColor} metalness={0.8} roughness={0.35} side={THREE.DoubleSide} />
       </mesh>
       <mesh ref={tongueRef} position={[0, 0.004, D * 0.1]} rotation={[0.18, 0, 0]}>
         <boxGeometry args={[W * 0.5, 0.0015, 0.014]} />
@@ -159,7 +185,7 @@ function ReedBlock({ W, D, g, playing, rate, fs }) {
 }
 
 export default function PipeMesh({ params, cutaway, playing, response }) {
-  const { length: L, width: W, depth: D, cutup: E, flueGap: g, wallThickness: wt, material, type, stopped } = params;
+  const { length: L, width: W, depth: D, cutup: E, flueGap: g, wallThickness: wt, material, type, stopped, chimney, shallot } = params;
   const mats = useMaterials(material);
   const isReed = type === 'reed';
 
@@ -168,13 +194,13 @@ export default function PipeMesh({ params, cutaway, playing, response }) {
       <Foot W={W} mats={mats} />
       {isReed ? (
         <group>
-          <MetalPipe L={L} W={W} E={0.01} cutaway={cutaway} mats={mats} stopped={stopped} />
-          <ReedBlock W={W} D={D} g={g} playing={playing} rate={params.tremulantRate} fs={response ? response.fs : 260} />
+          <MetalPipe L={L} W={W} E={0.01} cutaway={cutaway} mats={mats} stopped={stopped} chimney={chimney} />
+          <ReedBlock W={W} D={D} playing={playing} fs={response ? response.fs : 260} shallot={shallot} />
         </group>
       ) : material === 'metal' ? (
-        <MetalPipe L={L} W={W} E={E} cutaway={cutaway} mats={mats} stopped={stopped} />
+        <MetalPipe L={L} W={W} E={E} cutaway={cutaway} mats={mats} stopped={stopped} chimney={chimney} />
       ) : (
-        <WoodPipe L={L} W={W} D={D} E={E} wt={wt} cutaway={cutaway} mats={mats} stopped={stopped} />
+        <WoodPipe L={L} W={W} D={D} E={E} wt={wt} cutaway={cutaway} mats={mats} stopped={stopped} chimney={chimney} />
       )}
       {!isReed && <Languid W={W} D={D} g={g} />}
     </group>

@@ -32,13 +32,23 @@ export const N_HARMONICS = 14;
 // Minimum drive to count as audible speech.
 const DRIVE_MIN = 0.0005;
 
+// Formant templates (freq Hz, boost dB, Q) per shallot type for reed pipes.
+const FORMANT_OPEN_SHALLOT = [
+  { freq: 850, dB: 8, q: 1.2 },
+  { freq: 1700, dB: 5, q: 1.4 },
+];
+const FORMANT_CLOSED_SHALLOT = [
+  { freq: 550, dB: 9, q: 2.0 },
+  { freq: 1500, dB: 6, q: 2.0 },
+];
+
 export function computeResponse(p) {
   const {
     width: W, depth: D, cutup: E, flueGap: g,
     pressure: P, material, type = 'flue', stopped = false,
+    chimney = 0, shallot = 'open', tongueLength = 0.04, detuneCents = 0,
     tremulantRate = 0, tremulantDepth = 0,
   } = p;
-  const L = p.length !== undefined ? p.length : feetToLength(p.feet ?? 8, p.fineMM ?? 0);
 
   const c = PHYS.c;
   const rho = PHYS.rho;
@@ -46,6 +56,7 @@ export function computeResponse(p) {
   const area = Math.max(W * D, 1e-6);
   const rEff = Math.sqrt(area / Math.PI);
   // Effective acoustic length: physical length + open-end correction + mouth correction.
+  const L = p.length !== undefined ? p.length : feetToLength(p.feet ?? 8, p.fineMM ?? 0);
   const Leff = L + 0.61 * rEff + 0.3 * Math.sqrt(area);
   // Stopped (capped) pipes are quarter-wave resonators, open pipes half-wave.
   const waveDiv = stopped ? 4 : 2;
@@ -77,30 +88,54 @@ export function computeResponse(p) {
       : 0;
   }
 
-  const fs = f0 * mode; // sounding fundamental
+  const detune = Math.pow(2, (detuneCents || 0) / 1200);
+  const fs = f0 * mode * detune; // sounding fundamental
 
   // Spectral slope from the pipe scale: wide pipes -> few harmonics, narrow -> rich spectrum.
+  // Reed timbre: an open (expressive) shallot gives the blazing trumpet
+  // brightness; a closed shallot sounds narrower and duller (vox humana).
+  // A shorter tongue adds extra brightness on top.
+  const tongueBright = clamp(0.035 / clamp(tongueLength, 0.015, 0.2), 0.85, 1.25);
+  const shallotBright = shallot === 'closed' ? 1.3 : 0.75;
   const slope = isReed
-    ? clamp(0.25 + 6 * (W / L), 0.6, 2.4)
+    ? clamp((0.25 + 6 * (W / L)) * shallotBright / tongueBright, 0.4, 2.6)
     : clamp(0.4 + 10 * (W / L), 0.9, 3.2);
   // Wall damping: wood absorbs high harmonics much more than metal.
   const beta = isReed
     ? (material === 'wood' ? 0.09 : 0.035)
     : (material === 'wood' ? 0.16 : 0.06);
 
+  // Stopped pipes suppress even harmonics; a chimney (Rohrflöte) partially
+  // restores them, proportional to the chimney length relative to the body.
+  const chimneyRest = clamp(chimney / Math.max(0.001, L * 0.12), 0, 1);
+  const evenBase = stopped ? (isReed ? 0.4 : 0.12) : 1;
+  const evenFactor = (stopped && !isReed) ? evenBase + 0.55 * chimneyRest : evenBase;
+
   const harmonics = [];
   for (let k = 1; k <= N_HARMONICS; k++) {
     const base = Math.pow(1 / k, slope) * Math.exp(-beta * Math.pow(k - 1, 1.3));
-    // A stopped pipe has a displacement node at the cap: even harmonics nearly vanish.
-    const evenFactor = stopped && k % 2 === 0 ? (isReed ? 0.4 : 0.12) : 1;
-    harmonics.push({ k, freq: fs * k, amp: speaks ? base * evenFactor * drive : 0 });
+    const even = k % 2 === 0 ? evenFactor : 1;
+    harmonics.push({ k, freq: fs * k, amp: speaks ? base * even * drive : 0 });
+  }
+
+  // Formants: resonant peaks layered on top of the harmonic slope.
+  let formants = [];
+  if (speaks) {
+    if (isReed) {
+      const tpl = shallot === 'closed' ? FORMANT_CLOSED_SHALLOT : FORMANT_OPEN_SHALLOT;
+      formants = tpl.map((f) => ({ ...f, freq: f.freq * tongueBright }));
+    } else if (stopped && chimney > 0.002) {
+      // The chimney behaves as a small open pipe on top of the cap: its own
+      // resonance peaks through the stopped spectrum (the Rohrflöte timbre).
+      formants = [{ freq: c / (2 * Math.max(chimney, 0.004)), dB: 6, q: 2.2 }];
+    }
   }
 
   const power = harmonics.reduce((s, h) => s + h.amp * h.amp, 0);
   const levelDb = speaks ? 10 * Math.log10(power + 1e-9) + 96 : -Infinity;
 
   const attack = isReed
-    ? (speaks ? 0.09 + Math.min(0.25, L * 0.12) : 0.1)
+    ? (speaks ? clamp(0.04 + tongueLength * 1.2, 0.05, 0.2) : 0.1)
     : (speaks
       ? Math.min(0.45, (0.02 + 0.12 * Math.abs(Math.log((f0 * E) / v / ST_OPT))) * (mode > 1 ? 1.6 : 1))
       : 0.1);
@@ -128,7 +163,8 @@ export function computeResponse(p) {
   } else if (mode > 1) {
     status = `Overblown — mode ${mode}`;
   } else {
-    status = stopped ? 'Speaking (stopped)' : 'Speaking';
+    const kind = stopped ? (chimney > 0.002 ? 'Rohrflöte' : 'stopped') : null;
+    status = kind ? `Speaking (${kind})` : 'Speaking';
   }
 
   return {
@@ -140,6 +176,7 @@ export function computeResponse(p) {
     drive,
     slope,
     harmonics,
+    formants,
     levelDb,
     attack,
     release,
@@ -191,6 +228,8 @@ export function normalizeParams(p) {
   const mouthMin = Math.max(0.003, q.width * 0.12);
   const mouthMax = q.width * 0.45;
   q.cutup = clamp(q.cutup, mouthMin, mouthMax);
+  q.chimney = clamp(q.chimney || 0, 0, 0.3);
+  q.tongueLength = clamp(q.tongueLength || 0.04, 0.02, 0.12);
 
   if (q.type === 'reed') {
     q.pressure = clamp(q.pressure, 20, 1600);
@@ -221,59 +260,79 @@ export function normalizeParams(p) {
   return q;
 }
 
+// Rank detune layout: rank 0 is at pitch, extra ranks beat against it.
+export const RANK_OFFSETS = { 1: [0], 2: [0, 1], 3: [0, -0.5, 0.5] };
+
+// One response per rank (céleste: identical pipes with a detune offset).
+export function rankResponses(p) {
+  const offsets = RANK_OFFSETS[clamp(p.ranks || 1, 1, 3)] || [0];
+  return offsets.map((m) =>
+    computeResponse({ ...p, detuneCents: (p.detuneCents || 0) * m })
+  );
+}
+
+const BASE = {
+  type: 'flue', stopped: false, chimney: 0, shallot: 'open',
+  tongueLength: 0.04, ranks: 1, detuneCents: 0,
+  tremulantRate: 0, tremulantDepth: 0, fineMM: 0,
+};
+
 export const PRESETS = {
   principal: {
-    label: 'Principal (2′, middle C)',
+    label: 'Principal (2′)',
     params: {
-      material: 'metal',
-      type: 'flue',
-      stopped: false,
-      feet: 2,
-      fineMM: 0,
-      width: 0.077,
-      depth: 0.077,
-      cutup: 0.014,
-      flueGap: 0.001,
-      wallThickness: 0.0007,
-      pressure: 350,
-      tremulantRate: 0,
-      tremulantDepth: 0,
+      ...BASE, material: 'metal', feet: 2,
+      width: 0.077, depth: 0.077, cutup: 0.014, flueGap: 0.001,
+      wallThickness: 0.0007, pressure: 350,
     },
   },
   flute: {
     label: 'Wooden flute (2′)',
     params: {
-      material: 'wood',
-      type: 'flue',
-      stopped: false,
-      feet: 2,
-      fineMM: 0,
-      width: 0.13,
-      depth: 0.1,
-      cutup: 0.028,
-      flueGap: 0.0012,
-      wallThickness: 0.01,
-      pressure: 800,
-      tremulantRate: 0,
-      tremulantDepth: 0,
+      ...BASE, material: 'wood', feet: 2,
+      width: 0.13, depth: 0.1, cutup: 0.028, flueGap: 0.0012,
+      wallThickness: 0.01, pressure: 800,
     },
   },
   string: {
-    label: 'String / Viola (2′)',
+    label: 'String (2′)',
     params: {
-      material: 'metal',
-      type: 'flue',
-      stopped: false,
-      feet: 2,
-      fineMM: 0,
-      width: 0.03,
-      depth: 0.03,
-      cutup: 0.01,
-      flueGap: 0.0008,
-      wallThickness: 0.0006,
-      pressure: 200,
-      tremulantRate: 0,
-      tremulantDepth: 0,
+      ...BASE, material: 'metal', feet: 2,
+      width: 0.03, depth: 0.03, cutup: 0.01, flueGap: 0.0008,
+      wallThickness: 0.0006, pressure: 200,
+    },
+  },
+  celeste: {
+    label: 'Voix Céleste (2 ranks, +4 cent)',
+    params: {
+      ...BASE, material: 'metal', feet: 2,
+      width: 0.035, depth: 0.035, cutup: 0.009, flueGap: 0.0007,
+      wallThickness: 0.0006, pressure: 180,
+      ranks: 2, detuneCents: 4,
+    },
+  },
+  rohrflaute: {
+    label: 'Rohrflöte (2′, chimney)',
+    params: {
+      ...BASE, material: 'wood', feet: 2, stopped: true,
+      width: 0.11, depth: 0.09, cutup: 0.02, flueGap: 0.0012,
+      wallThickness: 0.01, pressure: 500, chimney: 0.14,
+    },
+  },
+  voxHumana: {
+    label: 'Vox Humana (reed, closed shallot)',
+    params: {
+      ...BASE, material: 'metal', feet: 2, type: 'reed', shallot: 'closed',
+      width: 0.05, depth: 0.05, cutup: 0.014, flueGap: 0.001,
+      wallThickness: 0.001, pressure: 600, tongueLength: 0.025,
+    },
+  },
+  trumpet: {
+    label: 'Trompet (reed, open shallot)',
+    params: {
+      ...BASE, material: 'metal', feet: 2, type: 'reed', shallot: 'open',
+      width: 0.06, depth: 0.06, cutup: 0.016, flueGap: 0.0012,
+      wallThickness: 0.001, pressure: 900, tongueLength: 0.05,
     },
   },
 };
